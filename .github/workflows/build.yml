@@ -1,0 +1,35 @@
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  app:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+          xcodebuild -version
+          swift --version
+
+      - name: Build
+        run: swift build -c release --disable-sandbox
+
+      - name: Bundle
+        run: |
+          app=dist/speech.md.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp .build/release/speech-md "$app/Contents/MacOS/speech-md"
+          cp App/Info.plist "$app/Contents/Info.plist"
+          cp App/AppIcon.icns App/conty-logo.svg "$app/Contents/Resources/"
+          codesign --force --deep --sign - "$app"
+          ditto -c -k --keepParent "$app" dist/speech.md.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: speech.md
+          path: dist/speech.md.zip

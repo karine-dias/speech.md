@@ -44,4 +44,18 @@ struct AudioInputDevice: Identifiable, Hashable, Sendable {
         guard status == noErr, deviceID != kAudioObjectUnknown else { return nil }
         return deviceID
     }
+
+    /// Taxa de amostragem em que o aparelho está operando agora.
+    static func nominalSampleRate(of deviceID: AudioDeviceID) -> Double? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var rate = Float64(0)
+        var size = UInt32(MemoryLayout<Float64>.size)
+        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &rate)
+        guard status == noErr, rate > 0 else { return nil }
+        return rate
+    }
 }

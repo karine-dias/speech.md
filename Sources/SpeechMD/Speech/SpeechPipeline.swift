@@ -124,6 +124,28 @@ actor SpeechPipeline {
         )
     }
 
+    /// A troca de dispositivo no AudioUnit se propaga de forma assíncrona: logo
+    /// depois dela o nó ainda pode reportar a taxa do microfone anterior (ex.:
+    /// AirPods a 24 kHz → microfone interno a 48 kHz), e instalar o tap com esse
+    /// formato derruba o app com "format mismatch". Espera o formato do nó
+    /// alcançar a taxa nominal do aparelho escolhido.
+    private func settledInputFormat(of input: AVAudioInputNode) async -> AVAudioFormat {
+        guard let inputDeviceUID,
+              let deviceID = AudioInputDevice.coreAudioID(for: inputDeviceUID),
+              let expectedRate = AudioInputDevice.nominalSampleRate(of: deviceID)
+        else { return input.outputFormat(forBus: 0) }
+
+        for _ in 0..<40 {
+            let format = input.outputFormat(forBus: 0)
+            if format.sampleRate == expectedRate,
+               input.inputFormat(forBus: 0).sampleRate == expectedRate {
+                return format
+            }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        return input.outputFormat(forBus: 0)
+    }
+
     func startMicrophone(onEvent: @escaping EventHandler) async throws {
         let prepared = try await preparePipeline()
         let analyzer = prepared.analyzer
@@ -136,7 +158,7 @@ actor SpeechPipeline {
         // Antes de ler o formato: trocar o dispositivo depois disso deixaria o
         // tap com a taxa de amostragem do microfone antigo.
         selectInputDevice(on: input)
-        let inputFormat = input.outputFormat(forBus: 0)
+        let inputFormat = await settledInputFormat(of: input)
         guard inputFormat.channelCount > 0 else {
             throw SpeechPipelineError.noMicrophone
         }
@@ -523,7 +545,12 @@ private final class AudioInputBridge: @unchecked Sendable {
             return input.buffer
         }
 
-        guard status == .haveData, conversionError == nil else { return }
+        // Com buffers pequenos (o áudio do sistema chega em ~1024 frames a
+        // 48 kHz) o conversor devolve .inputRanDry mesmo tendo convertido tudo
+        // o que recebeu. Descartar esse caso zerava a trilha dos outros.
+        guard status == .haveData || status == .inputRanDry,
+              conversionError == nil,
+              converted.frameLength > 0 else { return }
         continuation.yield(AnalyzerInput(buffer: converted))
     }
 
