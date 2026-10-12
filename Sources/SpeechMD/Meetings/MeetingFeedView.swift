@@ -2,11 +2,16 @@ import SwiftUI
 
 struct MeetingFeedView: View {
     let days: [MeetingDay]
+    let store: MeetingStore
     let model: MeetingSession
     let elapsed: TimeInterval
     let capturesSystemAudio: Bool
     let onStartMeeting: () -> Void
     let onUseMicrophoneOnly: () -> Void
+
+    @State private var openMeeting: Meeting?
+    @State private var summarizeOnOpen = false
+    @State private var meetingToDelete: Meeting?
 
     private var isRecording: Bool { model.phase.isRunning }
 
@@ -44,7 +49,20 @@ struct MeetingFeedView: View {
                                 if index > 0 {
                                     Divider().overlay(Theme.border)
                                 }
-                                MeetingRow(meeting: meeting)
+                                MeetingRow(
+                                    meeting: meeting,
+                                    onOpen: {
+                                        summarizeOnOpen = false
+                                        openMeeting = meeting
+                                    },
+                                    onSummarize: {
+                                        summarizeOnOpen = true
+                                        openMeeting = meeting
+                                    },
+                                    onCopy: { store.copyToPasteboard(meeting) },
+                                    onReveal: { store.revealInFinder(meeting) },
+                                    onDelete: { meetingToDelete = meeting }
+                                )
                             }
                         }
                         .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
@@ -57,6 +75,23 @@ struct MeetingFeedView: View {
             }
             .padding(.horizontal, 36)
             .padding(.vertical, 30)
+        }
+        .sheet(item: $openMeeting) { meeting in
+            MeetingDetailView(meetingID: meeting.id, store: store, summarizeOnAppear: summarizeOnOpen)
+        }
+        .confirmationDialog(
+            t("Excluir esta reunião?", "Delete this meeting?"),
+            isPresented: Binding(
+                get: { meetingToDelete != nil },
+                set: { if !$0 { meetingToDelete = nil } }
+            ),
+            presenting: meetingToDelete
+        ) { meeting in
+            Button(t("Mover para o Lixo", "Move to Trash"), role: .destructive) {
+                store.delete(meeting)
+            }
+        } message: { _ in
+            Text(t("O arquivo .md vai para o Lixo e pode ser recuperado pelo Finder.", "The .md file goes to the Trash and can be recovered from the Finder."))
         }
     }
 
@@ -157,6 +192,13 @@ struct MeetingFeedView: View {
 
 private struct MeetingRow: View {
     let meeting: Meeting
+    let onOpen: () -> Void
+    let onSummarize: () -> Void
+    let onCopy: () -> Void
+    let onReveal: () -> Void
+    let onDelete: () -> Void
+
+    @State private var copied = false
 
     @State private var isHovering = false
 
@@ -194,13 +236,44 @@ private struct MeetingRow: View {
             Spacer(minLength: 12)
 
             HStack(spacing: 4) {
-                RowAction(systemImage: "play.fill")
-                RowAction(systemImage: "doc.on.doc")
-                RowAction(systemImage: "sparkles")
-                RowAction(systemImage: "ellipsis")
+                RowAction(systemImage: "doc.text", help: t("Abrir transcrição", "Open transcript"), action: onOpen)
+                RowAction(
+                    systemImage: copied ? "checkmark" : "doc.on.doc",
+                    help: t("Copiar transcrição", "Copy transcript")
+                ) {
+                    onCopy()
+                    copied = true
+                    Task {
+                        try? await Task.sleep(for: .seconds(1.5))
+                        copied = false
+                    }
+                }
+                RowAction(
+                    systemImage: "sparkles",
+                    help: meeting.summary.isEmpty
+                        ? t("Resumir com Apple Intelligence", "Summarize with Apple Intelligence")
+                        : t("Ver resumo", "View summary"),
+                    action: meeting.summary.isEmpty ? onSummarize : onOpen
+                )
+                Menu {
+                    Button(t("Mostrar no Finder", "Show in Finder"), action: onReveal)
+                    Divider()
+                    Button(t("Excluir…", "Delete…"), role: .destructive, action: onDelete)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 28, height: 28)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help(t("Mais opções", "More options"))
             }
             .opacity(isHovering ? 1 : 0)
         }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2, perform: onOpen)
         .padding(.horizontal, 18)
         .padding(.vertical, 16)
         .background(isHovering ? Theme.surfaceHover.opacity(0.6) : .clear)
@@ -243,18 +316,191 @@ private struct MetaLabel: View {
 
 private struct RowAction: View {
     let systemImage: String
+    let help: String
+    let action: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: 12))
-            .foregroundStyle(Theme.textSecondary)
-            .frame(width: 28, height: 28)
-            .background {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(isHovering ? Theme.border.opacity(0.6) : .clear)
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 28, height: 28)
+                .background {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isHovering ? Theme.border.opacity(0.6) : .clear)
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointerStyle(.link)
+        .help(help)
+        .onHover { isHovering = $0 }
+    }
+}
+
+/// Transcrição completa de uma reunião, com as duas trilhas separadas.
+private struct MeetingDetailView: View {
+    let meetingID: UUID
+    let store: MeetingStore
+    let summarizeOnAppear: Bool
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+    @State private var isSummarizing = false
+    @State private var summaryError: String?
+
+    /// Lido da store a cada render: o resumo novo aparece sem reabrir.
+    private var meeting: Meeting {
+        store.meetings.first { $0.id == meetingID }
+            ?? Meeting(title: "", startedAt: Date(), duration: 0, you: "", others: "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(meeting.title)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                    HStack(spacing: 12) {
+                        MetaLabel(systemImage: "clock", text: meeting.formattedDuration)
+                        MetaLabel(systemImage: "text.word.spacing", text: "\(meeting.wordCount)")
+                    }
+                }
+                Spacer()
+                Button {
+                    summarize()
+                } label: {
+                    Label(
+                        meeting.summary.isEmpty ? t("Resumir", "Summarize") : t("Refazer resumo", "Redo summary"),
+                        systemImage: "sparkles"
+                    )
+                }
+                .disabled(isSummarizing)
+                Button {
+                    store.copyToPasteboard(meeting)
+                    copied = true
+                } label: {
+                    Label(
+                        copied ? t("Copiado", "Copied") : t("Copiar", "Copy"),
+                        systemImage: copied ? "checkmark" : "doc.on.doc"
+                    )
+                }
+                Button(t("Mostrar no Finder", "Show in Finder")) {
+                    store.revealInFinder(meeting)
+                }
+                Button(t("Fechar", "Close")) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
             }
-            .onHover { isHovering = $0 }
+            .padding(20)
+
+            Divider().overlay(Theme.border)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    summarySection
+                    if !meeting.you.isEmpty {
+                        track(t("Você", "You"), meeting.you)
+                    }
+                    if !meeting.others.isEmpty {
+                        track(t("Outros", "Others"), meeting.others)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
+            }
+        }
+        .frame(minWidth: 620, idealWidth: 720, minHeight: 460, idealHeight: 620)
+        .background(Theme.canvas)
+        .onAppear {
+            if summarizeOnAppear, meeting.summary.isEmpty { summarize() }
+        }
+    }
+
+    @ViewBuilder
+    private var summarySection: some View {
+        if isSummarizing {
+            HStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text(t("Resumindo com Apple Intelligence…", "Summarizing with Apple Intelligence…"))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+        } else if let summaryError {
+            Text(summaryError)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.live)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.live.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+        } else if !meeting.summary.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(t("RESUMO", "SUMMARY"), systemImage: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.accent)
+                    .tracking(0.6)
+                Text(Self.rendered(meeting.summary))
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+        }
+    }
+
+    private func summarize() {
+        let target = meeting
+        isSummarizing = true
+        summaryError = nil
+        Task {
+            do {
+                let summary = try await MeetingSummarizer.summarize(target)
+                store.setSummary(summary, for: target)
+            } catch {
+                summaryError = error.localizedDescription
+            }
+            isSummarizing = false
+        }
+    }
+
+    /// Markdown do modelo em texto com negrito, itálico e listas legíveis.
+    private static func rendered(_ markdown: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        )
+        let cleaned = markdown
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> String in
+                // Título ("### Decisões") vira linha em negrito.
+                guard line.hasPrefix("#") else { return String(line) }
+                let title = line.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
+                return "**\(title)**"
+            }
+            .joined(separator: "\n")
+        return (try? AttributedString(markdown: cleaned, options: options)) ?? AttributedString(markdown)
+    }
+
+    private func track(_ title: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.textTertiary)
+                .tracking(0.6)
+            Text(text)
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.textPrimary)
+                .lineSpacing(3)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }

@@ -43,14 +43,26 @@ enum Links {
 }
 
 struct Meeting: Identifiable {
-    let id = UUID()
+    var id = UUID()
     let title: String
     let startedAt: Date
     let duration: TimeInterval
-    let participants: Int
-    let excerpt: String
-    let wordCount: Int
+    /// Transcrição completa de cada trilha: o microfone e o áudio do sistema.
+    let you: String
+    let others: String
+    /// Resumo gerado pelo Apple Intelligence, em Markdown. Vazio até pedir.
+    var summary = ""
     var isLive = false
+    /// Arquivo .md onde a reunião está salva, quando já foi gravada em disco.
+    var fileURL: URL?
+
+    var participants: Int { others.isEmpty ? 1 : 2 }
+
+    var excerpt: String { [you, others].first { !$0.isEmpty } ?? "" }
+
+    var wordCount: Int {
+        (you + " " + others).split(whereSeparator: \.isWhitespace).count
+    }
 
     var formattedTime: String {
         Meeting.timeFormatter.string(from: startedAt)

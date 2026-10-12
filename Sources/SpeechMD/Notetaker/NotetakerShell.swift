@@ -13,7 +13,7 @@ struct NotetakerShell: View {
     @State private var files = FileTranscriptionModel()
     @State private var snippets = SnippetStore()
     @State private var isSidebarCollapsed = false
-    @State private var meetings: [Meeting] = []
+    @State private var meetingStore = MeetingStore()
     @State private var meetingStartedAt: Date?
     @State private var elapsed: TimeInterval = 0
     var body: some View {
@@ -24,8 +24,8 @@ struct NotetakerShell: View {
                 content
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                if selection == .notetaker, !meetings.isEmpty, !model.phase.isRunning {
-                    StatsRailView(stats: UsageStats(meetings: meetings))
+                if selection == .notetaker, !meetingStore.meetings.isEmpty, !model.phase.isRunning {
+                    StatsRailView(stats: UsageStats(meetings: meetingStore.meetings))
                         .padding(.top, 30)
                         .padding(.trailing, 30)
                 }
@@ -85,7 +85,8 @@ struct NotetakerShell: View {
             )
         case .notetaker:
             MeetingFeedView(
-                days: MeetingDay.group(meetings),
+                days: MeetingDay.group(meetingStore.meetings),
+                store: meetingStore,
                 model: model,
                 elapsed: elapsed,
                 capturesSystemAudio: settings.captureSystemAudio,
@@ -227,8 +228,7 @@ struct NotetakerShell: View {
         elapsed = 0
         guard !you.isEmpty || !others.isEmpty else { return }
 
-        let excerpt = [you, others].first { !$0.isEmpty } ?? ""
-        meetings.insert(
+        meetingStore.add(
             Meeting(
                 title: t(
                     "Reunião de \(Meeting.titleFormatter.string(from: startedAt))",
@@ -236,11 +236,9 @@ struct NotetakerShell: View {
                 ),
                 startedAt: startedAt,
                 duration: duration,
-                participants: others.isEmpty ? 1 : 2,
-                excerpt: excerpt,
-                wordCount: (you + " " + others).split(separator: " ").count
-            ),
-            at: 0
+                you: you,
+                others: others
+            )
         )
     }
 }
