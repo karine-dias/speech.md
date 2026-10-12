@@ -15,8 +15,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "speech.md")
-                ?? NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "speech.md")
+            let image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Speech.md")
+                ?? NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Speech.md")
             image?.isTemplate = true
             button.image = image
             button.toolTip = "speech.md - Ditado e Transcrição"
@@ -32,7 +32,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
 
         // Cabeçalho
-        let titleItem = NSMenuItem(title: "speech.md", action: nil, keyEquivalent: "")
+        let titleItem = NSMenuItem(title: "Speech.md", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
         menu.addItem(titleItem)
 

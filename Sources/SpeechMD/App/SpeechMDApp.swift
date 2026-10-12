@@ -6,7 +6,7 @@ struct SpeechMDApp: App {
     @State private var meetings = MeetingSession()
 
     var body: some Scene {
-        Window("speech.md", id: "main") {
+        Window("Speech.md", id: "main") {
             NotetakerShell(model: meetings)
         }
         .windowStyle(.hiddenTitleBar)

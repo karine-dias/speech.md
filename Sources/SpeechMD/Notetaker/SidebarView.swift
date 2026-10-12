@@ -77,7 +77,7 @@ struct SidebarView: View {
             Image(systemName: "waveform")
                 .font(.system(size: 17, weight: .semibold))
             if !isCollapsed {
-                Text("speech.md")
+                Text("Speech.md")
                     .font(.system(size: 19, weight: .semibold, design: .rounded))
                     .fixedSize()
             }

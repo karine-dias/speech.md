@@ -21,15 +21,15 @@ jobs:
 
       - name: Bundle
         run: |
-          app=dist/speech.md.app
+          app=dist/Speech.md.app
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           cp .build/release/speech-md "$app/Contents/MacOS/speech-md"
           cp App/Info.plist "$app/Contents/Info.plist"
           cp App/AppIcon.icns App/conty-logo.svg "$app/Contents/Resources/"
           codesign --force --deep --sign - "$app"
-          ditto -c -k --keepParent "$app" dist/speech.md.zip
+          ditto -c -k --keepParent "$app" dist/Speech.md.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: speech.md
-          path: dist/speech.md.zip
+          name: Speech.md
+          path: dist/Speech.md.zip
