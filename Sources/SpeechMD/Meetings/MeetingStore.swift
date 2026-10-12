@@ -40,7 +40,7 @@ final class MeetingStore {
         var meeting = meeting
         do {
             try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
-            let url = uniqueURL(for: meeting)
+            let url = uniqueURL(for: meeting, name: t("Reunião", "Meeting"))
             try Self.markdown(for: meeting, frontmatter: true)
                 .write(to: url, atomically: true, encoding: .utf8)
             meeting.fileURL = url
@@ -72,6 +72,29 @@ final class MeetingStore {
             try? Self.markdown(for: updated, frontmatter: true)
                 .write(to: url, atomically: true, encoding: .utf8)
         }
+    }
+
+    /// Troca o título e renomeia o arquivo junto, pra achar pelo nome no
+    /// Finder: `2026-10-12 1403 - Kickoff com Cliente X.md`.
+    func rename(_ meeting: Meeting, to newTitle: String) {
+        let title = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty,
+              let index = meetings.firstIndex(where: { $0.id == meeting.id }),
+              meetings[index].title != title else { return }
+
+        var updated = meetings[index]
+        updated.title = title
+        if let oldURL = updated.fileURL {
+            let newURL = uniqueURL(for: updated, name: title, replacing: oldURL)
+            if newURL != oldURL, (try? FileManager.default.moveItem(at: oldURL, to: newURL)) != nil {
+                updated.fileURL = newURL
+            }
+            if let url = updated.fileURL {
+                try? Self.markdown(for: updated, frontmatter: true)
+                    .write(to: url, atomically: true, encoding: .utf8)
+            }
+        }
+        meetings[index] = updated
     }
 
     func revealInFinder(_ meeting: Meeting) {
@@ -162,12 +185,18 @@ final class MeetingStore {
         return rest[..<end].trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// `2026-10-12 1403 - Reunião.md`; se já existir, ganha " 2", " 3"…
-    private func uniqueURL(for meeting: Meeting) -> URL {
-        let base = "\(Self.fileFormatter.string(from: meeting.startedAt)) - \(t("Reunião", "Meeting"))"
+    /// `2026-10-12 1403 - <nome>.md`; se já existir, ganha " 2", " 3"…
+    /// `replacing` é o arquivo atual da própria reunião, que não conta como
+    /// conflito ao renomear.
+    private func uniqueURL(for meeting: Meeting, name: String, replacing current: URL? = nil) -> URL {
+        // "/" e ":" não podem aparecer em nome de arquivo no macOS.
+        let safeName = name
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "h")
+        let base = "\(Self.fileFormatter.string(from: meeting.startedAt)) - \(safeName)"
         var url = Self.folder.appending(path: "\(base).md")
         var counter = 2
-        while FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
+        while url != current, FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
             url = Self.folder.appending(path: "\(base) \(counter).md")
             counter += 1
         }

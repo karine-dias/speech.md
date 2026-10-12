@@ -44,7 +44,7 @@ enum Links {
 
 struct Meeting: Identifiable {
     var id = UUID()
-    let title: String
+    var title: String
     let startedAt: Date
     let duration: TimeInterval
     /// Transcrição completa de cada trilha: o microfone e o áudio do sistema.

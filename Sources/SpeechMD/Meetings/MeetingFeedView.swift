@@ -12,6 +12,8 @@ struct MeetingFeedView: View {
     @State private var openMeeting: Meeting?
     @State private var summarizeOnOpen = false
     @State private var meetingToDelete: Meeting?
+    @State private var meetingToRename: Meeting?
+    @State private var renameText = ""
 
     private var isRecording: Bool { model.phase.isRunning }
 
@@ -61,6 +63,10 @@ struct MeetingFeedView: View {
                                     },
                                     onCopy: { store.copyToPasteboard(meeting) },
                                     onReveal: { store.revealInFinder(meeting) },
+                                    onRename: {
+                                        renameText = meeting.title
+                                        meetingToRename = meeting
+                                    },
                                     onDelete: { meetingToDelete = meeting }
                                 )
                             }
@@ -78,6 +84,22 @@ struct MeetingFeedView: View {
         }
         .sheet(item: $openMeeting) { meeting in
             MeetingDetailView(meetingID: meeting.id, store: store, summarizeOnAppear: summarizeOnOpen)
+        }
+        .alert(
+            t("Renomear reunião", "Rename meeting"),
+            isPresented: Binding(
+                get: { meetingToRename != nil },
+                set: { if !$0 { meetingToRename = nil } }
+            ),
+            presenting: meetingToRename
+        ) { meeting in
+            TextField(t("Ex.: Kickoff com Cliente X", "E.g. Kickoff with Client X"), text: $renameText)
+            Button(t("Renomear", "Rename")) {
+                store.rename(meeting, to: renameText)
+            }
+            Button(t("Cancelar", "Cancel"), role: .cancel) {}
+        } message: { _ in
+            Text(t("O arquivo .md é renomeado junto.", "The .md file is renamed too."))
         }
         .confirmationDialog(
             t("Excluir esta reunião?", "Delete this meeting?"),
@@ -196,6 +218,7 @@ private struct MeetingRow: View {
     let onSummarize: () -> Void
     let onCopy: () -> Void
     let onReveal: () -> Void
+    let onRename: () -> Void
     let onDelete: () -> Void
 
     @State private var copied = false
@@ -256,6 +279,7 @@ private struct MeetingRow: View {
                     action: meeting.summary.isEmpty ? onSummarize : onOpen
                 )
                 Menu {
+                    Button(t("Renomear…", "Rename…"), action: onRename)
                     Button(t("Mostrar no Finder", "Show in Finder"), action: onReveal)
                     Divider()
                     Button(t("Excluir…", "Delete…"), role: .destructive, action: onDelete)
@@ -350,6 +374,8 @@ private struct MeetingDetailView: View {
     @State private var copied = false
     @State private var isSummarizing = false
     @State private var summaryError: String?
+    @State private var titleDraft = ""
+    @FocusState private var isEditingTitle: Bool
 
     /// Lido da store a cada render: o resumo novo aparece sem reabrir.
     private var meeting: Meeting {
@@ -361,9 +387,17 @@ private struct MeetingDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(meeting.title)
+                    // Clicar no título edita; Enter ou sair do campo salva.
+                    TextField(t("Título da reunião", "Meeting title"), text: $titleDraft)
+                        .textFieldStyle(.plain)
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
+                        .focused($isEditingTitle)
+                        .onSubmit { store.rename(meeting, to: titleDraft) }
+                        .onChange(of: isEditingTitle) { _, editing in
+                            if !editing { store.rename(meeting, to: titleDraft) }
+                        }
+                        .help(t("Clique para renomear", "Click to rename"))
                     HStack(spacing: 12) {
                         MetaLabel(systemImage: "clock", text: meeting.formattedDuration)
                         MetaLabel(systemImage: "text.word.spacing", text: "\(meeting.wordCount)")
@@ -415,6 +449,7 @@ private struct MeetingDetailView: View {
         .frame(minWidth: 620, idealWidth: 720, minHeight: 460, idealHeight: 620)
         .background(Theme.canvas)
         .onAppear {
+            titleDraft = meeting.title
             if summarizeOnAppear, meeting.summary.isEmpty { summarize() }
         }
     }
