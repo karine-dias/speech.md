@@ -32,13 +32,6 @@ struct SidebarView: View {
 
             Spacer(minLength: 24)
 
-            if !isCollapsed {
-                ContyAd()
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
-                    .transition(.opacity)
-            }
-
             VStack(spacing: 2) {
                 NavRow(
                     section: .settings,
@@ -47,15 +40,6 @@ struct SidebarView: View {
                     namespace: selectionPill,
                     action: { selection = .settings }
                 )
-                LinkRow(
-                    title: "GitHub",
-                    icon: BrandIcon.github,
-                    url: Links.repository,
-                    isCollapsed: isCollapsed,
-                    badge: stars.map(GitHubStars.format)
-                )
-                .task { stars = await GitHubStars.fetch() ?? stars }
-                LinkRow(title: "@andersonbrdev", icon: BrandIcon.x, url: Links.profile, isCollapsed: isCollapsed)
             }
             .padding(.horizontal, isCollapsed ? 8 : 12)
             .padding(.bottom, 16)
