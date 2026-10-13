@@ -146,6 +146,23 @@ actor SpeechPipeline {
         return input.outputFormat(forBus: 0)
     }
 
+    /// Formato para o tap, lido do hardware no instante de instalar. O nó de
+    /// entrada não converte taxa: se o formato do cliente ficou preso na taxa
+    /// do aparelho anterior (AirPods a 24 kHz como entrada padrão do sistema,
+    /// microfone interno a 48 kHz escolhido no app), o tap tem que usar a do
+    /// hardware, senão o AVAudioEngine lança "format mismatch" e o app cai.
+    private func tapFormat(of input: AVAudioInputNode) -> AVAudioFormat {
+        let hardware = input.inputFormat(forBus: 0)
+        let client = input.outputFormat(forBus: 0)
+        guard hardware.sampleRate > 0, hardware.channelCount > 0,
+              client.sampleRate != hardware.sampleRate || client.channelCount != hardware.channelCount
+        else { return client }
+        return AVAudioFormat(
+            standardFormatWithSampleRate: hardware.sampleRate,
+            channels: hardware.channelCount
+        ) ?? client
+    }
+
     func startMicrophone(onEvent: @escaping EventHandler) async throws {
         let prepared = try await preparePipeline()
         let analyzer = prepared.analyzer
@@ -169,13 +186,15 @@ actor SpeechPipeline {
             throw SpeechPipelineError.unavailable
         }
 
+        // Relido aqui, depois dos awaits: a taxa pode ter mudado no meio tempo.
+        let captureFormat = tapFormat(of: input)
         let (inputSequence, inputBuilder) = AsyncStream.makeStream(of: AnalyzerInput.self)
         let bridge = try AudioInputBridge(
-            sourceFormat: inputFormat,
+            sourceFormat: captureFormat,
             analyzerFormat: analyzerFormat,
             continuation: inputBuilder
         )
-        input.installTap(onBus: 0, bufferSize: 256, format: inputFormat) { buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 256, format: captureFormat) { buffer, _ in
             bridge.receive(buffer)
         }
 
